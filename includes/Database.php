@@ -78,14 +78,32 @@ class RM_Database {
     }
 
     /**
-     * Ejecuta dbDelta() solo si la versión del esquema almacenada difiere de la actual.
+     * Ejecuta dbDelta() solo si la versión del esquema almacenada difiere de la actual
+     * o si la tabla no existe físicamente en la BD (ej: plugin cargado como mu-plugin
+     * sin que corriera register_activation_hook, o DB restaurada sin la tabla).
      * Se llama en cada carga del plugin (plugins_loaded) con costo mínimo:
-     * si las versiones coinciden, retorna inmediatamente sin tocar la BD.
+     * si todo está en orden, retorna inmediatamente sin tocar la BD.
      */
     public static function maybe_update_db() {
-        if ( get_option( 'rm_db_version' ) !== self::DB_VERSION ) {
+        if ( get_option( 'rm_db_version' ) !== self::DB_VERSION || ! self::table_exists() ) {
             self::create_table();
         }
+    }
+
+    /**
+     * Verifica si la tabla existe físicamente en la BD.
+     * Necesario porque get_option('rm_db_version') puede estar seteado
+     * pero la tabla haber sido dropeada manualmente o no creada (mu-plugin,
+     * usuario MySQL sin permiso CREATE, etc).
+     *
+     * @return bool
+     */
+    public static function table_exists(): bool {
+        global $wpdb;
+        $table = $wpdb->prefix . 'plugin_update_logs';
+        // $wpdb->prepare con %i requiere WP 6.2+. Usamos LIKE escapado manual.
+        $like = $wpdb->esc_like( $table );
+        return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $like ) ) === $table;
     }
 
     /**
@@ -103,6 +121,16 @@ class RM_Database {
      */
     public static function insert_log( array $data ) {
         global $wpdb;
+
+        // Guarda: si la tabla no existe (create_table falló por permisos MySQL,
+        // o alguien la dropeó), intentamos recrearla una vez antes de insertar.
+        // Si aún así no existe, abortamos silenciosamente para no tirar warning.
+        if ( ! self::table_exists() ) {
+            self::create_table();
+            if ( ! self::table_exists() ) {
+                return;
+            }
+        }
 
         $wpdb->insert(
             $wpdb->prefix . 'plugin_update_logs',

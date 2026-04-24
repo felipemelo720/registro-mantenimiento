@@ -26,10 +26,21 @@ class RM_Admin {
         add_management_page(
             __( 'Registro de Mantenimientos', 'registro-mantenimientos' ), // Título pestaña del navegador.
             __( 'Update Logs', 'registro-mantenimientos' ),                // Texto visible en el menú lateral.
-            'manage_options',                                              // Capacidad requerida para acceder.
+            self::required_capability(),                                   // Capacidad requerida (varía en multisite).
             'rm-update-logs',                                              // Slug único de la página (usado en la URL).
             [ $this, 'render_page' ]                                       // Función que imprime el contenido.
         );
+    }
+
+    /**
+     * Capacidad requerida para ver/usar la página.
+     * En multisite usamos manage_network_options (super admin) para que el plugin
+     * tenga sentido network-activated. En single site, manage_options.
+     *
+     * @return string
+     */
+    private static function required_capability(): string {
+        return is_multisite() ? 'manage_network_options' : 'manage_options';
     }
 
     /**
@@ -38,7 +49,7 @@ class RM_Admin {
      */
     public function render_page() {
         // Doble verificación de capacidad: nunca confiar solo en el registro del menú.
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( self::required_capability() ) ) {
             return;
         }
 
@@ -47,10 +58,19 @@ class RM_Admin {
 
         global $wpdb;
 
+        // Guarda: si la tabla no existe (permisos MySQL, mu-plugin, etc.), intentar
+        // crearla una vez y si falla mostrar aviso en vez de warning de SQL.
+        if ( ! RM_Database::table_exists() ) {
+            RM_Database::create_table();
+        }
+
         // Obtiene los últimos 50 registros ordenados del más reciente al más antiguo.
-        $rows = $wpdb->get_results(
-            "SELECT * FROM {$wpdb->prefix}plugin_update_logs ORDER BY id DESC LIMIT 50"
-        );
+        // Si la tabla sigue sin existir, $rows será array vacío en vez de warning.
+        $rows = RM_Database::table_exists()
+            ? $wpdb->get_results(
+                "SELECT * FROM {$wpdb->prefix}plugin_update_logs ORDER BY id DESC LIMIT 50"
+            )
+            : [];
         ?>
         <div class="wrap">
             <h1><?php esc_html_e( 'Registro de Mantenimientos', 'registro-mantenimientos' ); ?></h1>
@@ -213,7 +233,7 @@ class RM_Admin {
         }
 
         // Verificación de capacidad: el usuario debe ser administrador.
-        if ( ! current_user_can( 'manage_options' ) ) {
+        if ( ! current_user_can( self::required_capability() ) ) {
             return [ 'type' => 'error', 'message' => __( 'No tienes permisos para realizar esta acción.', 'registro-mantenimientos' ) ];
         }
 
